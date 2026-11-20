@@ -1,106 +1,99 @@
-# Simulator Bot 设计方案与执行计划
+# Simulator Bot System Design and Delivery Plan
 
-本仓库维护 Simulator Bot 的整体架构、工程边界和跨工程设计。某个工程的专项技术方案及模块设计，放在对应工程内维护。
+**English** | [简体中文](README.zh-CN.md)
 
-本文说明 Simulator Bot 的系统方案、工程边界和落地顺序。当前以一个范围明确的工业自动化场景为试点，先打通真实运行数据、世界模型、仿真和结果评估，再逐步形成可控的改进闭环。
+This repository maintains system architecture, project boundaries, and cross-project design. Each engineering project maintains its own technical and module designs. Start with one bounded industrial pilot, connect field data to the world model, simulation, and evaluation, then build a controlled improvement loop.
 
-## 目标与工作闭环
+## Objective and operating loop
 
-智能自动化机器人是核心产品。它从真实工业运行中观察设备、流程、事件和约束，将现场信息映射到世界模型，在仿真中验证未来场景，再依据预测与实际结果的差异改进模型和操作策略。经过验证的变更由智能体平台受控发布。
+The industrial automation agent is the core product. It observes equipment, processes, events, and constraints through field data, maps them into the world model, tests future scenarios, and uses the difference between predicted and observed outcomes to improve models and strategies. The agent platform releases validated changes.
 
 ```mermaid
 flowchart LR
-    R[真实自动化系统] --> C[工业自动化连接器]
-    C --> W[工业世界模型]
-    C --> P[智能体平台]
-    P --> A[智能自动化机器人]
-    W -->|场景模型与状态| A
-    W --> S[仿真平台（方案、适配与所选引擎）]
-    A -->|场景与计划| S
-    S --> E[场景评估]
-    W -->|实际运行轨迹| E
+    R[Industrial automation system] --> C[Connectors]
+    C --> W[Industrial world model]
+    C --> P[Agent platform]
+    P --> A[Automation agent]
+    W -->|Scenario model and state| A
+    W --> S[Simulation platform]
+    A -->|Scenarios and plans| S
+    S --> E[Scenario evaluation]
+    W -->|Observed production history| E
     E --> A
     E --> W
-    A -->|经过验证的操作| P
-    P -->|受控执行| C
+    A -->|Validated actions| P
+    P -->|Controlled execution| C
 ```
 
-运行闭环：
+## Engineering boundaries
 
-**观察真实运行 → 映射到世界模型 → 仿真未来场景 → 对照预测与实际结果 → 改进模型和机器人 → 通过智能体平台发布经过验证的改进。**
+The simulation solution, engine choice, and integration design proceed together once pilot needs are known. The simulation platform integrates the selected engine. Its internal adapter boundaries remain open.
 
-## 工程边界
-
-工程体系由六个职责明确的项目组成。模型、仿真、机器人和平台分别承担不同职责，避免把学习推理、场景数据、仿真引擎和现场执行混在同一层。
-
-**仿真设计状态：** 仿真方案和具体引擎尚未确定。因此，现阶段把方案设计、引擎选型和接入设计作为同一条工作流推进；待试点需求和技术方案明确后，再细化仿真平台内部适配器与引擎之间的接口和职责。`simulation-platform` 表示仿真能力的工程范围，不代表要自行开发仿真引擎。
-
-| 工程 | 主要职责 | 不负责 |
+| Project | Owns | Neighboring responsibilities |
 | --- | --- | --- |
-| `industrial-automation-connectors` | 连接 PLC、MES、SCADA、机器人、工厂摄像头及其他自动化系统；统一设备遥测、视觉信号、事件和可用操作。 | 视觉/机器人推理、运行时、平台级权限管理。 |
-| `industrial-world-model` | 描述并维护设备、流程、状态、关系、约束和故障行为；根据真实运行数据校准场景模型，并通过稳定接口提供版本化模型、可溯源工件轨迹和指定时刻的场景快照。 | Agent 的任务规划和策略推理；仿真引擎适配。 |
-| `simulation-platform` | 负责仿真方案的工程化；根据试点需要设计模型接入、场景构建、仿真运行和结果读取，并集成选定的仿真引擎。具体引擎和内部适配边界待方案阶段确定。 | 定义共享世界模型；现场设备连接。 |
-| `automation-agent` | 通过世界模型接口读取场景状态、关系和约束；学习真实运行与仿真之间的映射、规划任务、解释仿真结果并改进策略。 | 直接管理设备连接、权限或生产运行时；绕过模型接口维护世界模型。 |
-| `scenario-evaluation` | 比较仿真预测与实际结果；维护测试场景、指标、回归检查，评估模型和机器人。 | 执行生产操作。 |
-| `automation-agent-platform` | 运行和协调机器人、工具与工作流；管理运行时、权限、执行控制和审计记录。 | 定义设备协议、世界模型或仿真引擎内部实现。 |
+| industrial-automation-connectors | PLC, MES, SCADA, robot and camera connections, normalized telemetry, visual signals, events, and capabilities | Vision and agent inference, runtime, and platform permissions live elsewhere. |
+| industrial-world-model | Equipment, flows, states, relationships, constraints and failure behavior, calibrated from real operations. Supplies versioned definitions, traceable histories, and point-in-time snapshots. | Agent planning and engine adaptation belong to their respective projects. |
+| simulation-platform | Scenario construction, model integration, engine selection, reproducible runs and results | Consumes the shared model and field data through their owners. |
+| automation-agent | Reads model state and constraints, learns how real operations map to simulation, plans, interprets results, and improves strategies | Uses model interfaces, connector capabilities and platform-managed permissions and runtime. |
+| scenario-evaluation | Compares simulation with actual outcomes, maintains cases, metrics and regression checks, evaluates agents and models | Production execution belongs to the platform. |
+| automation-agent-platform | Runs and coordinates agents, tools and workflows, manages authorization, controlled execution and audit | Protocols, model semantics, and simulation engine internals have separate owners. |
 
-## 落地方案
+## Delivery sequence
 
-### 1. 先限定一个可验证的试点
+### 1. Define a verifiable pilot
 
-选择一种自动化系统和一个代表性场景，明确要观察的设备、流程、状态、约束、事件和可用操作。为该场景定义可记录的实际结果和成功指标，并明确哪些操作只允许仿真、哪些操作可以进入受控现场验证。
+Select an automation system and representative scenario. Identify the equipment, flows, states, constraints, events, and actions involved. Define measurable outcomes and distinguish simulation-only actions from controlled field trials.
 
-**交付与验收：** 形成试点范围说明、数据与操作清单、场景成功指标及现场操作边界；试点能用已有数据或受控采集方式复现。
+**Acceptance.** Document scope, data, operations, success metrics, and execution boundaries. Confirm that existing records or controlled collection can reproduce the case.
 
-### 2. 接入一种自动化系统
+### 2. Connect a field system
 
-通过 `industrial-automation-connectors` 连接试点系统，将设备遥测、状态变化、摄像头/视觉信号、事件和可用操作整理为稳定接口。视频媒体流和结构化信号按各自的数据路径接入；先确保数据可读取、时间戳和设备标识一致，再逐步验证操作接口及其权限边界。
+Normalize telemetry, state changes, camera signals, events, and available operations through industrial-automation-connectors. Separate raw video from structured signals. Establish readable data, consistent timestamps and equipment IDs, then verify operations and permissions.
 
-**交付与验收：** 上层能够通过统一接口读取试点所需状态和事件；数据来源、时间和设备标识可追溯；操作能力及其边界有明确记录。
+**Acceptance.** Consumers can read the required state and events, trace sources, timestamps and IDs, and inspect supported operations and limits.
 
-### 3. 建立试点的工业世界模型
+### 3. Build the pilot world model
 
-通过 `industrial-world-model` 维护设备行为模板、绑定现场点位的实例，以及设备间的交接、缓存和资源占用规则。按事件重建状态和故障行为，区分加工结束、工件离站与下游接收。用真实轨迹校准加工、换型等参数，记录适用工况、模型版本与来源。
+Maintain behavior templates, point-bound instances, handoffs, buffer rules, and resource occupancy. Reconstruct states and failure behavior from events. Distinguish completion, departure, and downstream receipt. Calibrate processing and changeover by operating condition, with versions and provenance.
 
-**独立验收。** 选两台相邻设备、一次交接和一段真实班次日志。现场人员能逐件核对动作时间线，追溯到源事件，并读取交接时刻的设备状态、在制品、资源占用和未知项。Agent 和仿真平台通过同一读取接口取得模型与快照。后续沿工艺路由和共享资源扩展到片区，再按跨区物流、工单和排程扩展到全厂。
+**Independent acceptance.** Replay a real shift segment for two adjacent machines and one handoff. An engineer checks individual timelines against events and retrieves equipment state, work in progress, occupied resources, and unknowns at the handoff. Agent and simulator read the same version. Extend along routes and shared resources to an area, then connect areas through logistics, work orders, and schedules.
 
-### 4. 将模型接入仿真并运行未来场景
+### 4. Run future scenarios
 
-先围绕试点设计仿真方案，明确需要模拟的对象、行为、输入和结果，再选择一个合适的仿真引擎。由 `automation-agent` 选择候选变更，`simulation-platform` 读取世界模型快照，在相同初始条件下运行原配置和候选配置。通过该平台完成模型接入、场景构建、仿真运行和结果读取；初期可将引擎选型与接入设计作为同一工作流，接口边界随方案验证逐步明确。
+Define objects, behaviors, inputs, and outputs before choosing an engine. The agent selects a candidate change. Simulation-platform reads the snapshot and runs baseline and candidate under identical initial conditions. Refine engine integration and internal adapters as the pilot validates them.
 
-**交付与验收：** 同一场景和输入可以重复运行；仿真输出能关联到模型版本、场景定义和输入条件；仿真结果可供 Agent 与评估流程使用。
+**Acceptance.** Runs are reproducible and linked to model version, scenario definition, and inputs. Results are available to the agent and evaluation.
 
-### 5. 建立评估基线并实现 Agent 闭环
+### 5. Establish evaluation and agent feedback
 
-通过 `scenario-evaluation` 保存代表性场景、实际结果和评估指标。`automation-agent` 结合连接器提供的真实运行信息与世界模型中的场景状态，提出仿真场景与计划，解释仿真结果，并依据预测误差提出模型或策略改进；模型变更由世界模型按版本管理，并经过评估验证。
+Scenario-evaluation stores cases, observed outcomes, and metrics. The agent uses field observations and model state to propose plans, interpret simulation results, and suggest model or strategy changes based on error. World-model changes are versioned and evaluated.
 
-**交付与验收：** 能够对同一组场景比较预测与实际结果；评估结果可复现并支持回归检查；Agent 的建议能追溯到输入、模型版本、仿真结果和评估依据。
+**Acceptance.** Compare predictions and actuals on the same cases. Reproduce evaluations and regression checks. Trace recommendations to inputs, model version, runs, and evidence.
 
-### 6. 通过平台受控发布经过验证的改进
+### 6. Release validated changes under control
 
-将 Agent、连接器、仿真和评估流程接入 `automation-agent-platform`。平台负责工作流运行、权限校验、执行控制和审计。只有经过场景评估并符合试点操作边界的变更，才进入受控现场验证。
+Integrate the agent, connectors, simulation, and evaluation with automation-agent-platform for workflow execution, authorization, control, and auditing. Only evaluated changes within the pilot's agreed scope qualify for controlled field validation.
 
-**交付与验收：** 每次执行均可追溯到发起方、权限、模型与策略版本、评估结果和执行结果；未授权或未通过验证的操作不能进入现场执行流程。
+**Acceptance.** Trace each execution to its initiator, permissions, model and strategy versions, evaluation, and result. Block unauthorized or unvalidated operations.
 
-### 7. 根据证据扩展
+### 7. Expand with evidence
 
-试点闭环稳定后，沿用连接器、世界模型、仿真平台和评估接口，扩展到更多设备、系统与场景。每次扩展都保留已有回归场景，比较新旧模型和策略的结果。
+Once the pilot is stable, reuse the connector, model, simulation, and evaluation interfaces for additional equipment and systems. Retain previous regression cases.
 
-**交付与验收：** 新场景可以接入既有流程；扩展不会降低已覆盖场景的评估表现；模型和策略变化有可比较的版本记录。
+**Acceptance.** New scenarios fit the workflow. Compare new and old models and strategies and check performance on existing cases.
 
-## 关键设计约定
+## Design commitments
 
-- **模型表达运行行为：** 世界模型描述目标场景所需的状态、流程、关系、约束和故障行为；三维可视化只是呈现方式之一。
-- **先设计仿真方案：** 仿真引擎尚未选定；先根据试点场景确定仿真需求，再验证引擎和接入方案。暂不为多引擎扩展预设复杂接口。
-- **评估贯穿迭代：** 模型或策略的改进应由可重复场景、测量指标和实际结果支持。
-- **职责分层：** Agent 负责理解、规划和改进；平台负责运行、权限、执行控制和审计；连接器负责现场系统接入。
-- **受控现场操作：** 面向真实系统的操作经智能体平台管理，并遵循明确的权限和验证流程。
+- Model relevant states, flows, relationships, constraints, and failures. Three-dimensional visualization is one possible presentation.
+- Select an engine from demonstrated pilot requirements. Defer multi-engine abstraction until needed.
+- Use repeatable cases, metrics, and actual outcomes to justify improvements.
+- The agent owns understanding, planning, and improvement. The platform owns runtime, authorization, execution, and audit. Connectors own field integration.
+- Route real operations through the agent platform's authorization and validation controls.
 
-## 当前优先级
+## Current priorities
 
-1. 明确一个试点系统、场景、指标和操作边界。
-2. 完成该系统的连接器和统一状态、事件接口。
-3. 定义试点的工业世界模型及现场数据映射。
-4. 设计仿真方案、选择试点引擎，并在 `simulation-platform` 项目中运行可重复的未来场景。
-5. 建立场景评估基线，并实现 Agent 的现实到仿真映射。
-6. 将验证通过的流程接入智能体平台，逐步开展受控现场验证。
+Define one pilot and its limits, connect its field system, map observations to the world model, design and run simulation, establish evaluation and the agent's reality-to-simulation mapping, then integrate the validated workflow for controlled field trials.
+
+## Documentation languages
+
+Maintain English and Simplified Chinese editions together. The unsuffixed Markdown file is the public English entry point. Use the same basename with `.zh-CN.md` for Chinese, link both editions, and update both when the design changes.
